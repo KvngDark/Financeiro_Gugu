@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Despachante Digital</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark">DD</span>
+          <div>
+            <p class="eyebrow">Despachante por WhatsApp</p>
+            <h1>Controle de documentos</h1>
+          </div>
+        </div>
+        <nav class="tabs" aria-label="Telas">
+          <button class="tab active" type="button" data-view="painel">Painel</button>
+          <button class="tab" type="button" data-view="clientes">Clientes</button>
+          <button class="tab" type="button" data-view="processos">Processos</button>
+        </nav>
+        <button id="refreshButton" class="icon-button" type="button" aria-label="Atualizar" title="Atualizar">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M20 12a8 8 0 0 1-14.7 4.4"></path>
+            <path d="M4 12A8 8 0 0 1 18.7 7.6"></path>
+            <path d="M18 3v5h-5"></path>
+            <path d="M6 21v-5h5"></path>
+          </svg>
+        </button>
+      </header>
+
+      <main>
+        <section id="painel" class="view active">
+          <section class="metrics-grid" aria-label="Resumo">
+            <article class="metric-card metric-main">
+              <span>Lucro previsto</span>
+              <strong id="lucroPrevisto">R$ 0,00</strong>
+              <small id="processosResumo">0 processos</small>
+            </article>
+            <article class="metric-card">
+              <span>Recebido</span>
+              <strong id="totalRecebido">R$ 0,00</strong>
+              <small>Entradas confirmadas</small>
+            </article>
+            <article class="metric-card">
+              <span>A receber</span>
+              <strong id="totalAReceber">R$ 0,00</strong>
+              <small id="pendentesResumo">0 pendentes</small>
+            </article>
+            <article class="metric-card">
+              <span>Gastos</span>
+              <strong id="totalGasto">R$ 0,00</strong>
+              <small id="lucroRealizado">Lucro realizado: R$ 0,00</small>
+            </article>
+          </section>
+
+          <section class="dashboard-grid">
+            <article class="panel">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Carteira</p>
+                  <h2>Clientes com processos</h2>
+                </div>
+                <span id="clientesBadge" class="badge">0 clientes</span>
+              </div>
+              <div id="clientesResumo" class="summary-list"></div>
+            </article>
+
+            <article class="panel">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Recorrencia</p>
+                  <h2>Tipos mais feitos</h2>
+                </div>
+                <span id="tiposBadge" class="badge">0 tipos</span>
+              </div>
+              <div id="tiposResumo" class="summary-list"></div>
+            </article>
+
+            <article class="panel">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Ultimos cadastros</p>
+                  <h2>Processos recentes</h2>
+                </div>
+              </div>
+              <div id="recentesLista" class="document-list compact"></div>
+            </article>
+          </section>
+        </section>
+
+        <section id="clientes" class="view">
+          <div class="management-grid">
+            <article class="panel">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Cadastro</p>
+                  <h2>Cliente</h2>
+                </div>
+              </div>
+              <form id="clienteForm" class="entry-form">
+                <label>
+                  <span>Placa</span>
+                  <input id="placaInput" maxlength="7" placeholder="ABC1234 ou ABC1D23" required>
+                </label>
+                <label>
+                  <span>CPF</span>
+                  <input id="cpfInput" inputmode="numeric" maxlength="14" placeholder="000.000.000-00" required>
+                </label>
+                <label class="wide">
+                  <span>Nome</span>
+                  <input id="nomeInput" placeholder="Nome do cliente" required>
+                </label>
+                <label class="wide">
+                  <span>Telefone</span>
+                  <input id="telefoneInput" inputmode="tel" maxlength="15" placeholder="(21) 99999-9999" required>
+                </label>
+                <button id="clienteSubmit" class="primary-button" type="submit">Salvar cliente</button>
+                <button id="cancelClienteEdit" class="secondary-button" type="button" hidden>Cancelar edicao</button>
+              </form>
+              <p id="clienteMessage" class="form-message"></p>
+            </article>
+
+            <article class="panel">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Base</p>
+                  <h2>Clientes cadastrados</h2>
+                </div>
+                <span id="totalClientesBadge" class="badge">0 clientes</span>
+              </div>
+              <div id="clientesLista" class="client-grid"></div>
+            </article>
+          </div>
+        </section>
+
+        <section id="processos" class="view">
+          <div class="management-grid">
+            <article class="panel">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Documento</p>
+                  <h2>Novo processo</h2>
+                </div>
+              </div>
+              <form id="documentoForm" class="entry-form">
+                <label class="wide">
+                  <span>Cliente por CPF / placa</span>
+                  <select id="clienteSelect" required></select>
+                </label>
+                <label class="wide">
+                  <span>Tipo de processo</span>
+                  <select id="tipoProcessoSelect" required></select>
+                </label>
+                <label>
+                  <span>Valor recebido</span>
+                  <input id="valorRecebidoInput" inputmode="decimal" placeholder="0,00" required>
+                </label>
+                <label>
+                  <span>Valor gasto</span>
+                  <input id="valorGastoInput" inputmode="decimal" placeholder="0,00" required>
+                </label>
+                <label class="check wide">
+                  <input id="recebidoInput" type="checkbox">
+                  <span>Pagamento recebido</span>
+                </label>
+                <button id="documentoSubmit" class="primary-button" type="submit">Salvar processo</button>
+                <button id="cancelDocumentoEdit" class="secondary-button" type="button" hidden>Cancelar edicao</button>
+              </form>
+              <p id="documentoMessage" class="form-message"></p>
+
+              <form id="tipoProcessoForm" class="entry-form type-form">
+                <label class="wide">
+                  <span>Novo tipo de processo</span>
+                  <input id="tipoProcessoInput" placeholder="Ex.: Baixa de gravame" required>
+                </label>
+                <button class="secondary-button" type="submit">Criar tipo</button>
+              </form>
+              <p id="tipoProcessoMessage" class="form-message"></p>
+            </article>
+
+            <article class="panel">
+              <div class="section-heading list-heading">
+                <div>
+                  <p class="eyebrow">Controle</p>
+                  <h2>Processos de documentos</h2>
+                </div>
+                <div class="filters">
+                  <input id="buscaInput" placeholder="Buscar CPF, placa, nome ou tipo" aria-label="Buscar processos">
+                  <select id="filtroTipo" aria-label="Filtrar por tipo de processo"></select>
+                  <select id="filtroRecebido" aria-label="Filtrar recebimento">
+                    <option value="todos">Todos</option>
+                    <option value="recebidos">Recebidos</option>
+                    <option value="pendentes">A receber</option>
+                  </select>
+                </div>
+              </div>
+              <div id="documentosLista" class="document-list"></div>
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="app.js" type="module"></script>
+  </body>
+</html>

@@ -1,0 +1,9 @@
+{
+  "name": "despachante-documentos",
+  "version": "1.0.0",
+  "description": "Sistema separado para controle de documentos de despachante por WhatsApp.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
