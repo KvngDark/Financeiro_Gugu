@@ -119,6 +119,14 @@ h3 {
   gap: 7px;
 }
 
+.topbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .tab,
 .icon-button,
 .secondary-button,
@@ -158,6 +166,27 @@ h3 {
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.storage-badge {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(216, 146, 22, 0.28);
+  border-radius: 999px;
+  padding: 6px 11px;
+  color: #8a570d;
+  background: rgba(255, 247, 232, 0.92);
+  font-size: 0.8rem;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.storage-badge.connected {
+  border-color: rgba(22, 138, 98, 0.24);
+  color: #0f5e42;
+  background: rgba(22, 138, 98, 0.12);
 }
 
 .view {
@@ -605,6 +634,10 @@ dd {
   }
 
   .tabs {
+    justify-content: flex-start;
+  }
+
+  .topbar-actions {
     justify-content: flex-start;
   }
 

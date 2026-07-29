@@ -21,14 +21,17 @@
           <button class="tab" type="button" data-view="clientes">Clientes</button>
           <button class="tab" type="button" data-view="processos">Processos</button>
         </nav>
-        <button id="refreshButton" class="icon-button" type="button" aria-label="Atualizar" title="Atualizar">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M20 12a8 8 0 0 1-14.7 4.4"></path>
-            <path d="M4 12A8 8 0 0 1 18.7 7.6"></path>
-            <path d="M18 3v5h-5"></path>
-            <path d="M6 21v-5h5"></path>
-          </svg>
-        </button>
+        <div class="topbar-actions">
+          <span id="storageBadge" class="storage-badge">Conectando</span>
+          <button id="refreshButton" class="icon-button" type="button" aria-label="Atualizar" title="Atualizar">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M20 12a8 8 0 0 1-14.7 4.4"></path>
+              <path d="M4 12A8 8 0 0 1 18.7 7.6"></path>
+              <path d="M18 3v5h-5"></path>
+              <path d="M6 21v-5h5"></path>
+            </svg>
+          </button>
+        </div>
       </header>
 
       <main>

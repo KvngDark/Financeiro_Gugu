@@ -1,10 +1,13 @@
 import http from "node:http";
-import fs from "node:fs/promises";
+import fsSync from "node:fs";
+import fsp from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+loadEnvFile();
+
 const publicDir = path.join(__dirname, "public");
 const dataDir = path.join(__dirname, "data");
 const dataFile = path.join(dataDir, "store.json");
@@ -15,6 +18,9 @@ const defaultProcessTypes = [
   { id: "segunda_via_codigo_seguranca", nome: "2 via de codigo de seguranca", createdAt: "2026-01-01T00:00:00.000Z" },
   { id: "primeira_licenca", nome: "1 licenca", createdAt: "2026-01-01T00:00:00.000Z" }
 ];
+
+let poolPromise;
+let schemaReady = false;
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -34,18 +40,26 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`Despachante documentos em http://${host}:${port}`);
+  const storage = hasDatabaseConfig() ? "TiDB" : "arquivo local";
+  console.log(`Despachante documentos em http://${host}:${port} usando ${storage}.`);
 });
 
 async function handleApi(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/health") {
-    sendJson(res, 200, { ok: true });
+    sendJson(res, 200, { ok: true, storage: hasDatabaseConfig() ? "tidb" : "local-json" });
     return;
   }
 
   if (req.method === "GET" && url.pathname === "/api/bootstrap") {
     const store = await readStore();
-    sendJson(res, 200, { ...store, summary: buildSummary(store) });
+    sendJson(res, 200, {
+      config: {
+        storage: hasDatabaseConfig() ? "tidb" : "local-json",
+        databaseConfigured: hasDatabaseConfig()
+      },
+      ...store,
+      summary: buildSummary(store)
+    });
     return;
   }
 
@@ -265,8 +279,21 @@ function buildSummary(store) {
 }
 
 async function readStore() {
+  if (hasDatabaseConfig()) return readDatabaseStore();
+  return readLocalStore();
+}
+
+async function writeStore(store) {
+  if (hasDatabaseConfig()) {
+    await writeDatabaseStore(store);
+    return;
+  }
+  await writeLocalStore(store);
+}
+
+async function readLocalStore() {
   try {
-    const raw = await fs.readFile(dataFile, "utf8");
+    const raw = await fsp.readFile(dataFile, "utf8");
     const parsed = JSON.parse(raw);
     const processTypes = mergeProcessTypes(parsed.processTypes);
     return {
@@ -280,14 +307,167 @@ async function readStore() {
   }
 }
 
-async function writeStore(store) {
-  await fs.mkdir(dataDir, { recursive: true });
+async function writeLocalStore(store) {
+  await fsp.mkdir(dataDir, { recursive: true });
   const ordered = {
     clients: [...store.clients].sort((a, b) => a.nome.localeCompare(b.nome) || a.placa.localeCompare(b.placa)),
     processTypes: mergeProcessTypes(store.processTypes),
     documents: [...store.documents].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
   };
-  await fs.writeFile(dataFile, `${JSON.stringify(ordered, null, 2)}\n`, "utf8");
+  await fsp.writeFile(dataFile, `${JSON.stringify(ordered, null, 2)}\n`, "utf8");
+}
+
+async function readDatabaseStore() {
+  const pool = await getPool();
+  const [clientRows] = await pool.query(`
+    SELECT
+      placa,
+      nome,
+      telefone,
+      cpf,
+      DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%s.000Z') AS createdAt,
+      DATE_FORMAT(updated_at, '%Y-%m-%dT%H:%i:%s.000Z') AS updatedAt
+    FROM dispatch_clients
+    ORDER BY nome ASC, placa ASC
+  `);
+  const [typeRows] = await pool.query(`
+    SELECT
+      id,
+      nome,
+      DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%s.000Z') AS createdAt
+    FROM dispatch_process_types
+    ORDER BY created_at ASC, nome ASC
+  `);
+  const processTypes = mergeProcessTypes(typeRows.map(mapProcessTypeRow));
+  const [documentRows] = await pool.query(`
+    SELECT
+      id_documento AS idDocumento,
+      placa,
+      tipo_processo_id AS tipoProcessoId,
+      valor_recebido AS valorRecebido,
+      valor_gasto AS valorGasto,
+      lucro,
+      recebido,
+      DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%s.000Z') AS createdAt,
+      DATE_FORMAT(updated_at, '%Y-%m-%dT%H:%i:%s.000Z') AS updatedAt
+    FROM dispatch_documents
+    ORDER BY created_at DESC
+  `);
+
+  return {
+    clients: clientRows.map(mapClientRow),
+    processTypes,
+    documents: documentRows.map((row) => cleanStoredDocument(mapDocumentRow(row), processTypes))
+  };
+}
+
+async function writeDatabaseStore(store) {
+  const pool = await getPool();
+  const ordered = orderStoreForWrite(store);
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+    await connection.execute("DELETE FROM dispatch_documents");
+    await connection.execute("DELETE FROM dispatch_process_types");
+    await connection.execute("DELETE FROM dispatch_clients");
+
+    for (const client of ordered.clients) {
+      await connection.execute(
+        `
+          INSERT INTO dispatch_clients
+            (placa, nome, telefone, cpf, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `,
+        [
+          client.placa,
+          client.nome,
+          client.telefone,
+          client.cpf,
+          toMysqlDateTime(client.createdAt),
+          toMysqlDateTime(client.updatedAt || client.createdAt)
+        ]
+      );
+    }
+
+    for (const processType of ordered.processTypes) {
+      await connection.execute(
+        "INSERT INTO dispatch_process_types (id, nome, created_at) VALUES (?, ?, ?)",
+        [processType.id, processType.nome, toMysqlDateTime(processType.createdAt)]
+      );
+    }
+
+    for (const documentRecord of ordered.documents) {
+      await connection.execute(
+        `
+          INSERT INTO dispatch_documents
+            (id_documento, placa, tipo_processo_id, valor_recebido, valor_gasto, recebido, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        [
+          documentRecord.idDocumento,
+          documentRecord.placa,
+          documentRecord.tipoProcessoId,
+          documentRecord.valorRecebido,
+          documentRecord.valorGasto,
+          documentRecord.recebido ? 1 : 0,
+          toMysqlDateTime(documentRecord.createdAt),
+          toMysqlDateTime(documentRecord.updatedAt || documentRecord.createdAt)
+        ]
+      );
+    }
+
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+function orderStoreForWrite(store) {
+  const processTypes = mergeProcessTypes(store.processTypes);
+  return {
+    clients: [...store.clients].sort((a, b) => a.nome.localeCompare(b.nome) || a.placa.localeCompare(b.placa)),
+    processTypes,
+    documents: [...store.documents]
+      .map((documentRecord) => cleanStoredDocument(documentRecord, processTypes))
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+  };
+}
+
+function mapClientRow(row) {
+  return {
+    placa: row.placa,
+    nome: row.nome,
+    telefone: row.telefone,
+    cpf: row.cpf,
+    createdAt: row.createdAt || now(),
+    updatedAt: row.updatedAt || row.createdAt || now()
+  };
+}
+
+function mapProcessTypeRow(row) {
+  return {
+    id: row.id,
+    nome: row.nome,
+    createdAt: row.createdAt || now()
+  };
+}
+
+function mapDocumentRow(row) {
+  return {
+    idDocumento: row.idDocumento,
+    placa: row.placa,
+    tipoProcessoId: row.tipoProcessoId,
+    valorRecebido: Number(row.valorRecebido || 0),
+    valorGasto: Number(row.valorGasto || 0),
+    lucro: Number(row.lucro || 0),
+    recebido: Boolean(row.recebido),
+    createdAt: row.createdAt || now(),
+    updatedAt: row.updatedAt || row.createdAt || now()
+  };
 }
 
 function mergeProcessTypes(processTypes = []) {
@@ -322,6 +502,149 @@ function cleanStoredDocument(documentRecord, processTypes) {
   };
 }
 
+async function getPool() {
+  if (!poolPromise) {
+    poolPromise = (async () => {
+      let mysql;
+      try {
+        mysql = await import("mysql2/promise");
+      } catch {
+        throw new HttpError(500, "O pacote mysql2 nao esta instalado. Rode npm install antes de usar o TiDB.");
+      }
+
+      const pool = mysql.createPool(await buildMysqlConfig());
+      if (!schemaReady && shouldAutoCreateSchema()) {
+        await ensureSchema(pool);
+        schemaReady = true;
+      }
+      return pool;
+    })();
+  }
+  return poolPromise;
+}
+
+async function buildMysqlConfig() {
+  const base = process.env.DATABASE_URL ? configFromDatabaseUrl() : configFromTidbEnv();
+  const ssl = await getSslConfig();
+
+  return {
+    ...base,
+    waitForConnections: true,
+    connectionLimit: Number(process.env.DB_CONNECTION_LIMIT || 8),
+    queueLimit: 0,
+    decimalNumbers: true,
+    dateStrings: true,
+    ...(ssl ? { ssl } : {})
+  };
+}
+
+function configFromDatabaseUrl() {
+  const url = new URL(process.env.DATABASE_URL);
+  return {
+    host: url.hostname,
+    port: Number(url.port || 4000),
+    user: decodeURIComponent(url.username),
+    password: decodeURIComponent(url.password),
+    database: decodeURIComponent(url.pathname.replace(/^\//, ""))
+  };
+}
+
+function configFromTidbEnv() {
+  return {
+    host: process.env.TIDB_HOST,
+    port: Number(process.env.TIDB_PORT || 4000),
+    user: process.env.TIDB_USER,
+    password: process.env.TIDB_PASSWORD,
+    database: process.env.TIDB_DATABASE
+  };
+}
+
+async function getSslConfig() {
+  if (String(process.env.TIDB_SSL || "true").toLowerCase() === "false") return null;
+
+  const ssl = {
+    minVersion: "TLSv1.2",
+    rejectUnauthorized: String(process.env.TIDB_SSL_REJECT_UNAUTHORIZED || "true").toLowerCase() !== "false"
+  };
+
+  if (process.env.TIDB_CA_CERT) {
+    ssl.ca = await fsp.readFile(process.env.TIDB_CA_CERT, "utf8");
+  }
+
+  return ssl;
+}
+
+async function ensureSchema(pool) {
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS dispatch_clients (
+      placa VARCHAR(7) PRIMARY KEY,
+      nome VARCHAR(120) NOT NULL,
+      telefone VARCHAR(15) NOT NULL,
+      cpf VARCHAR(14) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_dispatch_clients_cpf (cpf),
+      INDEX idx_dispatch_clients_nome (nome)
+    )
+  `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS dispatch_process_types (
+      id VARCHAR(70) PRIMARY KEY,
+      nome VARCHAR(90) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_dispatch_process_types_nome (nome)
+    )
+  `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS dispatch_documents (
+      id_documento VARCHAR(36) PRIMARY KEY,
+      placa VARCHAR(7) NOT NULL,
+      tipo_processo_id VARCHAR(70) NOT NULL,
+      valor_recebido DECIMAL(12, 2) NOT NULL DEFAULT 0,
+      valor_gasto DECIMAL(12, 2) NOT NULL DEFAULT 0,
+      lucro DECIMAL(12, 2) AS (valor_recebido - valor_gasto) STORED,
+      recebido TINYINT(1) NOT NULL DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_dispatch_documents_placa (placa),
+      INDEX idx_dispatch_documents_tipo (tipo_processo_id),
+      INDEX idx_dispatch_documents_recebido (recebido),
+      CONSTRAINT fk_dispatch_documents_client
+        FOREIGN KEY (placa) REFERENCES dispatch_clients (placa),
+      CONSTRAINT fk_dispatch_documents_process_type
+        FOREIGN KEY (tipo_processo_id) REFERENCES dispatch_process_types (id)
+    )
+  `);
+
+  await seedDefaultProcessTypes(pool);
+}
+
+async function seedDefaultProcessTypes(pool) {
+  for (const processType of defaultProcessTypes) {
+    await pool.execute(
+      "INSERT IGNORE INTO dispatch_process_types (id, nome, created_at) VALUES (?, ?, ?)",
+      [processType.id, processType.nome, toMysqlDateTime(processType.createdAt)]
+    );
+  }
+}
+
+function hasDatabaseConfig() {
+  if (process.env.DATABASE_URL) return true;
+  return Boolean(process.env.TIDB_HOST && process.env.TIDB_USER && process.env.TIDB_DATABASE);
+}
+
+function shouldAutoCreateSchema() {
+  return String(process.env.TIDB_AUTO_SCHEMA || "true").toLowerCase() !== "false";
+}
+
+function toMysqlDateTime(value) {
+  const date = new Date(value || now());
+  const safeDate = Number.isNaN(date.getTime()) ? new Date() : date;
+  return safeDate.toISOString().slice(0, 19).replace("T", " ");
+}
+
 async function readJson(req) {
   const chunks = [];
   let size = 0;
@@ -348,12 +671,12 @@ async function serveStatic(res, pathname) {
   }
 
   try {
-    const file = await fs.readFile(filePath);
+    const file = await fsp.readFile(filePath);
     res.writeHead(200, { "Content-Type": contentType(filePath), "Cache-Control": "no-store" });
     res.end(file);
   } catch (error) {
     if (error.code === "ENOENT") {
-      const index = await fs.readFile(path.join(publicDir, "index.html"));
+      const index = await fsp.readFile(path.join(publicDir, "index.html"));
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
       res.end(index);
       return;
@@ -396,6 +719,31 @@ function slugify(value) {
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "")
     .slice(0, 70);
+}
+
+function loadEnvFile() {
+  const envPaths = [path.join(__dirname, ".env"), path.join(process.cwd(), ".env")];
+  const loaded = new Set();
+
+  for (const envPath of envPaths) {
+    if (loaded.has(envPath) || !fsSync.existsSync(envPath)) continue;
+    loaded.add(envPath);
+
+    const lines = fsSync.readFileSync(envPath, "utf8").split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const separator = trimmed.indexOf("=");
+      if (separator === -1) continue;
+
+      const key = trimmed.slice(0, separator).trim();
+      let value = trimmed.slice(separator + 1).trim();
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      if (!process.env[key]) process.env[key] = value;
+    }
+  }
 }
 
 class HttpError extends Error {

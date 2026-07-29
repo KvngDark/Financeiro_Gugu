@@ -17,6 +17,7 @@ const els = {
   tabs: document.querySelectorAll(".tab"),
   views: document.querySelectorAll(".view"),
   refreshButton: document.querySelector("#refreshButton"),
+  storageBadge: document.querySelector("#storageBadge"),
   lucroPrevisto: document.querySelector("#lucroPrevisto"),
   processosResumo: document.querySelector("#processosResumo"),
   totalRecebido: document.querySelector("#totalRecebido"),
@@ -112,11 +113,21 @@ async function refreshAll() {
     state.processTypes = payload.processTypes || [];
     state.documents = payload.documents || [];
     state.summary = payload.summary || {};
+    renderStorageStatus(payload.config);
     setMessage(els.documentoMessage, "");
     renderAll();
   } catch (error) {
     setMessage(els.documentoMessage, error.message || "Nao foi possivel carregar.", true);
   }
+}
+
+function renderStorageStatus(config = {}) {
+  const databaseConfigured = Boolean(config.databaseConfigured);
+  els.storageBadge.textContent = databaseConfigured ? "TiDB conectado" : "Modo local";
+  els.storageBadge.classList.toggle("connected", databaseConfigured);
+  els.storageBadge.title = databaseConfigured
+    ? "Dados salvos no TiDB."
+    : "Sem credenciais do TiDB, os dados ficam no arquivo local.";
 }
 
 function renderAll() {
