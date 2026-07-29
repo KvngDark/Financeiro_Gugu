@@ -44,3 +44,7 @@ Tipos iniciais:
 - 1 licenca
 
 Novos tipos podem ser criados pela tela de processos. Eles aparecem no filtro e no resumo de recorrencia.
+
+## SQL para TiDB
+
+O schema para criar as tabelas no TiDB fica em `sql/tidb-schema.sql`.
